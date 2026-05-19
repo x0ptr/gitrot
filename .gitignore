@@ -1,0 +1,19 @@
+# Binaries
+gitrot
+gitrot.exe
+bin/
+
+# Go build/test artifacts
+*.test
+*.out
+coverage.out
+
+# IDE/editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
