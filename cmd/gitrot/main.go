@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"gitrot/internal/analyzer"
-	"gitrot/internal/config"
-	"gitrot/internal/git"
-	"gitrot/internal/state"
+	"github.com/x0ptr/gitrot/internal/analyzer"
+	"github.com/x0ptr/gitrot/internal/config"
+	"github.com/x0ptr/gitrot/internal/git"
+	"github.com/x0ptr/gitrot/internal/state"
 )
 
 type statusConfig struct {
