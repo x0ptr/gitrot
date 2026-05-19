@@ -29,6 +29,22 @@ go install github.com/x0ptr/gitrot/cmd/gitrot@latest
    gitrot status
    ```
 
+## 🤖 Auto-Healing with AI Agents (The Unix Way)
+
+`gitrot` is built to be piped. It tells you exactly *what* drifted; an AI agent can take that output and decide *how* to fix it.
+
+```bash
+gitrot status | copilot
+```
+
+That is modern Unix philosophy in action: one tool reports semantic dissonance, another tool repairs it.
+
+Example workflow:
+
+1. `gitrot` reports: "File A drifted 3 commits away from File B."
+2. The AI agent reads the report and runs `git diff` on File A.
+3. The agent writes the missing implementation/tests/docs for File B to realign both files.
+
 ## Configuration
 
 `gitrot init` creates `.gitrot.toml` with these thresholds:
