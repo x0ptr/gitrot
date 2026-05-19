@@ -1,6 +1,12 @@
-# gitrot
+# 🥀 gitrot
+
+![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+![Release](https://img.shields.io/github/v/release/x0ptr/gitrot)
 
 `gitrot` is a CLI tool that detects semantic decay in a Git repository by analyzing historical file coupling and current drift.
+
+![gitrot in action](./assets/demo.gif)
 
 ## The Problem
 
@@ -10,6 +16,10 @@ Code evolves with implicit dependencies:
 - Feature implementations are coupled to their unit tests.
 
 When one file changes repeatedly while historically coupled files stop changing, dissonance increases. Static analysis and linters typically do not detect this.
+
+## Why gitrot?
+
+Unlike heavy enterprise dashboards (like CodeScene or SonarQube) that require CI/CD integration and cloud accounts, `gitrot` is a minimalist, Unix-native CLI. It runs locally, executes in milliseconds, and can be piped directly into AI agents to auto-heal your repository.
 
 ## Installation
 
