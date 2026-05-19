@@ -1,4 +1,4 @@
-module gitrot
+module [github.com/x0ptr/gitrot](https://github.com/x0ptr/gitrot)
 
 go 1.26
 
