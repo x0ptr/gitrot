@@ -31,19 +31,28 @@ go install github.com/x0ptr/gitrot/cmd/gitrot@latest
 
 ## 🤖 Auto-Healing with AI Agents (The Unix Way)
 
-`gitrot` is built to be piped. It tells you exactly *what* drifted; an AI agent can take that output and decide *how* to fix it.
+`gitrot` tells you **what** drifted. An AI agent can help decide **how** to repair it. Use one of these two modes intentionally:
+
+### ✅ The Safe Way (Recommended)
 
 ```bash
-gitrot status | copilot
+copilot "Please fix these dissonance issues: $(gitrot status)"
 ```
 
-That is modern Unix philosophy in action: one tool reports semantic dissonance, another tool repairs it.
+Using command substitution (`$(...)`) passes `gitrot` output as a normal string argument to `copilot`.
+Because input is passed as an argument, `stdin` stays attached to your keyboard, so the agent can pause and ask for confirmation (for example `[y/N]`) before applying patches or running `git apply`.
 
-Example workflow:
+### ⚠️ The Unsafe / Power-User Way (Danger Zone)
 
-1. `gitrot` reports: "File A drifted 3 commits away from File B."
-2. The AI agent reads the report and runs `git diff` on File A.
-3. The agent writes the missing implementation/tests/docs for File B to realign both files.
+```bash
+gitrot status | copilot --yolo
+# or
+copilot -p "$(gitrot status)" --yolo
+```
+
+This is for CI/CD automation or developers who explicitly want zero prompts.
+With direct piping plus `--yolo`, safety confirmations are bypassed: the agent reads the dissonance, fetches diffs, and writes changes directly to your filesystem.
+Use this only on a clean working tree so you can quickly review and revert if the model hallucinates.
 
 ## Configuration
 
