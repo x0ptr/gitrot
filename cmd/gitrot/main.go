@@ -34,6 +34,11 @@ type stagedConfig struct {
 	ignoreSilo    bool
 }
 
+type mapConfig struct {
+	history  int
+	maxFiles int
+}
+
 type exitCoder interface {
 	error
 	ExitCode() int
@@ -70,6 +75,8 @@ func main() {
 		err = runStatus(os.Args[2:])
 	case "staged":
 		err = runStaged(os.Args[2:])
+	case "map":
+		err = runMap(os.Args[2:])
 	case "ack":
 		err = runAck(os.Args[2:])
 	case "init":
@@ -340,6 +347,72 @@ func runAck(args []string) error {
 	return nil
 }
 
+func runMap(args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: gitrot map <file_path>")
+	}
+
+	repo, err := git.NewRepository(".")
+	if err != nil {
+		return err
+	}
+
+	targetFile, err := normalizeAckPath(repo.Root(), args[0])
+	if err != nil {
+		return err
+	}
+
+	cfg, err := loadMapConfig(repo.Root())
+	if err != nil {
+		return err
+	}
+
+	commits, err := repo.LoadCommits(cfg.history)
+	if err != nil {
+		return err
+	}
+	if len(commits) == 0 {
+		fmt.Fprintf(os.Stderr, "Error: No historical data found for %s\n", targetFile)
+		return commandExit{code: 1}
+	}
+
+	knowledge, ok := analyzer.BuildKnowledgeMap(toAnalyzerCommits(commits), targetFile, analyzer.KnowledgeMapConfig{
+		CouplingThreshold: 0.20,
+		MaxFilesPerCommit: cfg.maxFiles,
+		MaxCoupledFiles:   8,
+		MaxAuthors:        5,
+	})
+	if !ok {
+		fmt.Fprintf(os.Stderr, "Error: No historical data found for %s\n", targetFile)
+		return commandExit{code: 1}
+	}
+
+	printKnowledgeMap(os.Stdout, knowledge)
+	return nil
+}
+
+func loadMapConfig(repoRoot string) (mapConfig, error) {
+	cfg := mapConfig{
+		history:  2000,
+		maxFiles: 30,
+	}
+
+	repoCfg, err := config.Load(filepath.Join(repoRoot, ".gitrot.toml"))
+	if err != nil {
+		return mapConfig{}, err
+	}
+	cfg.history = repoCfg.Thresholds.History
+	cfg.maxFiles = repoCfg.Thresholds.MaxFiles
+
+	if cfg.history < 1 {
+		return mapConfig{}, fmt.Errorf("history must be >= 1")
+	}
+	if cfg.maxFiles < 1 {
+		return mapConfig{}, fmt.Errorf("max_files must be >= 1")
+	}
+	return cfg, nil
+}
+
 func printFindings(findings []analyzer.GroupedFinding, analyzedCommits int, cfg statusConfig) {
 	if len(findings) == 0 {
 		fmt.Printf("✓ No dissonance detected (Analyzed %d commits. Thresholds: >%.0f%% coupling, >=%d drift, ignoring commits with >%d files).\n", analyzedCommits, cfg.minCoupling, cfg.minDrift, cfg.maxFiles)
@@ -397,8 +470,24 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "Usage:")
 	fmt.Fprintln(os.Stderr, "  gitrot status [--history 2000] [--min-coupling 60] [--min-cohesion 30] [--min-shared 3] [--min-drift 2] [--max-files 30] [--ignore-tangled] [--ignore-silo]")
 	fmt.Fprintln(os.Stderr, "  gitrot staged [--history 2000] [--min-coupling 60] [--min-cohesion 30] [--max-files 30] [--ignore-tangled] [--ignore-silo]")
+	fmt.Fprintln(os.Stderr, "  gitrot map <file_path>")
 	fmt.Fprintln(os.Stderr, "  gitrot ack <file_path>")
 	fmt.Fprintln(os.Stderr, "  gitrot init")
+}
+
+func printKnowledgeMap(w io.Writer, knowledge analyzer.KnowledgeMap) {
+	fmt.Fprintf(w, "Knowledge Map for: %s\n", knowledge.Target)
+	fmt.Fprintln(w, "--------------------------------------------------")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Historically, when this file changes, the following files also change:")
+	for _, c := range knowledge.Coupled {
+		fmt.Fprintf(w, "  - %s (%.0f%% coupling)\n", c.Path, c.Coupling*100)
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Primary Knowledge Holders (Top Authors):")
+	for _, a := range knowledge.Authors {
+		fmt.Fprintf(w, "  - %s (%d commits)\n", a.Author, a.Commits)
+	}
 }
 
 func evaluateStagedGuard(repo *git.Repository, cfg stagedConfig) (*tangledWarning, error) {

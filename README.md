@@ -6,6 +6,7 @@ It currently covers:
 - **Dissonance Drift**: a file keeps changing while historically coupled files are left behind.
 - **Tangled Commit Detection**: staged files in one commit have low historical cohesion.
 - **Context Loss (Knowledge Silo)**: drift is driven by authors with no historical overlap on the coupled file pair.
+- **Knowledge Map**: quick coupling and ownership discovery for a specific file.
 
 ## Installation
 
@@ -19,6 +20,7 @@ go install github.com/x0ptr/gitrot/cmd/gitrot@latest
 gitrot init
 gitrot status [--history 2000] [--min-coupling 60] [--min-cohesion 30] [--min-shared 3] [--min-drift 2] [--max-files 30] [--ignore-tangled] [--ignore-silo]
 gitrot staged [--history 2000] [--min-coupling 60] [--min-cohesion 30] [--max-files 30] [--ignore-tangled] [--ignore-silo]
+gitrot map <file_path>
 gitrot ack <file_path>
 ```
 
@@ -60,6 +62,18 @@ Bypass once:
 
 ```bash
 gitrot staged --ignore-tangled
+```
+
+## `gitrot map <file>`
+
+Prints a discovery view for one file:
+- top historically coupled files (discovery threshold: `> 20%`)
+- top knowledge holders by commit participation count
+
+If no historical data is available for the target, it prints:
+
+```text
+Error: No historical data found for <file>
 ```
 
 ## Configuration
