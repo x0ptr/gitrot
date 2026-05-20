@@ -1,8 +1,6 @@
 package main
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"flag"
 	"fmt"
 	"io"
@@ -10,43 +8,52 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/fatih/color"
 	"github.com/x0ptr/gitrot/internal/analyzer"
 	"github.com/x0ptr/gitrot/internal/config"
 	"github.com/x0ptr/gitrot/internal/git"
 	"github.com/x0ptr/gitrot/internal/state"
+	"github.com/x0ptr/gitrot/internal/utils"
 )
 
 type statusConfig struct {
-	history       int
-	minCoupling   float64
-	minCohesion   int
-	minShared     int
-	minDrift      int
-	maxFiles      int
-	ignoreTangled bool
-	ignoreSilo    bool
+	history        int
+	minCoupling    float64
+	minCohesion    int
+	minShared      int
+	minDrift       int
+	maxFiles       int
+	ignoreTangled  bool
+	ignoreSilo     bool
+	hideName       bool
+	ignoreDotfiles bool
 }
 
 type stagedConfig struct {
-	history       int
-	minCoupling   float64
-	minCohesion   int
-	maxFiles      int
-	ignoreTangled bool
-	ignoreSilo    bool
+	history        int
+	minCoupling    float64
+	minCohesion    int
+	maxFiles       int
+	ignoreTangled  bool
+	ignoreSilo     bool
+	hideName       bool
+	ignoreDotfiles bool
 }
 
 type mapConfig struct {
-	history  int
-	maxFiles int
-	hideName bool
+	history        int
+	maxFiles       int
+	hideName       bool
+	ignoreDotfiles bool
 }
 
 type hotspotConfig struct {
-	history     int
-	minCoupling float64
-	maxFiles    int
-	targetPath  string
+	history        int
+	minCoupling    float64
+	maxFiles       int
+	targetPath     string
+	hideName       bool
+	ignoreDotfiles bool
 }
 
 type exitCoder interface {
@@ -72,6 +79,15 @@ type tangledWarning struct {
 	StagedCount  int
 	ProblemFiles []string
 }
+
+var (
+	warningLabel = color.New(color.FgRed, color.Bold).SprintFunc()
+	insightLabel = color.New(color.FgYellow).SprintFunc()
+	tipLabel     = color.New(color.FgYellow).SprintFunc()
+	pathText     = color.New(color.FgCyan).SprintFunc()
+	metricText   = color.New(color.FgCyan).SprintFunc()
+	nameText     = color.New(color.FgMagenta).SprintFunc()
+)
 
 func main() {
 	if len(os.Args) < 2 {
@@ -117,7 +133,7 @@ func runStatus(args []string) error {
 		return err
 	}
 
-	commits, err := repo.LoadCommits(cfg.history)
+	commits, err := repo.LoadCommits(cfg.history, cfg.ignoreDotfiles)
 	if err != nil {
 		return err
 	}
@@ -137,12 +153,14 @@ func runStatus(args []string) error {
 
 	if !cfg.ignoreTangled {
 		warning, err := evaluateStagedGuard(repo, stagedConfig{
-			history:       cfg.history,
-			minCoupling:   cfg.minCoupling,
-			minCohesion:   cfg.minCohesion,
-			maxFiles:      cfg.maxFiles,
-			ignoreTangled: cfg.ignoreTangled,
-			ignoreSilo:    cfg.ignoreSilo,
+			history:        cfg.history,
+			minCoupling:    cfg.minCoupling,
+			minCohesion:    cfg.minCohesion,
+			maxFiles:       cfg.maxFiles,
+			ignoreTangled:  cfg.ignoreTangled,
+			ignoreSilo:     cfg.ignoreSilo,
+			hideName:       cfg.hideName,
+			ignoreDotfiles: cfg.ignoreDotfiles,
 		})
 		if err != nil {
 			return err
@@ -156,14 +174,16 @@ func runStatus(args []string) error {
 
 func loadStatusConfig(repoRoot string, args []string) (statusConfig, error) {
 	cfg := statusConfig{
-		history:       2000,
-		minCoupling:   60,
-		minCohesion:   30,
-		minShared:     3,
-		minDrift:      2,
-		maxFiles:      30,
-		ignoreTangled: false,
-		ignoreSilo:    false,
+		history:        2000,
+		minCoupling:    60,
+		minCohesion:    30,
+		minShared:      3,
+		minDrift:       2,
+		maxFiles:       30,
+		ignoreTangled:  false,
+		ignoreSilo:     false,
+		hideName:       false,
+		ignoreDotfiles: true,
 	}
 
 	repoCfg, err := config.Load(filepath.Join(repoRoot, ".gitrot.toml"))
@@ -178,6 +198,8 @@ func loadStatusConfig(repoRoot string, args []string) (statusConfig, error) {
 	cfg.minDrift = repoCfg.Thresholds.MinDrift
 	cfg.ignoreTangled = repoCfg.Features.IgnoreTangled
 	cfg.ignoreSilo = repoCfg.Features.IgnoreSilo
+	cfg.hideName = repoCfg.Features.HideName
+	cfg.ignoreDotfiles = repoCfg.Features.IgnoreDotfiles
 
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -189,6 +211,8 @@ func loadStatusConfig(repoRoot string, args []string) (statusConfig, error) {
 	fs.IntVar(&cfg.maxFiles, "max-files", cfg.maxFiles, "ignore commits touching more than this many files")
 	fs.BoolVar(&cfg.ignoreTangled, "ignore-tangled", cfg.ignoreTangled, "disable tangled commit detection")
 	fs.BoolVar(&cfg.ignoreSilo, "ignore-silo", cfg.ignoreSilo, "disable silo detection (reserved)")
+	fs.BoolVar(&cfg.hideName, "hide-name", cfg.hideName, "obfuscate developer names in output")
+	fs.BoolVar(&cfg.ignoreDotfiles, "ignore-dotfiles", cfg.ignoreDotfiles, "exclude dotfiles and hidden directories from analysis")
 	if err := fs.Parse(args); err != nil {
 		return statusConfig{}, err
 	}
@@ -253,12 +277,14 @@ func cliIgnoreTangled(args []string) bool {
 
 func loadStagedConfig(repoRoot string, args []string) (stagedConfig, error) {
 	cfg := stagedConfig{
-		history:       2000,
-		minCoupling:   60,
-		minCohesion:   30,
-		maxFiles:      30,
-		ignoreTangled: false,
-		ignoreSilo:    false,
+		history:        2000,
+		minCoupling:    60,
+		minCohesion:    30,
+		maxFiles:       30,
+		ignoreTangled:  false,
+		ignoreSilo:     false,
+		hideName:       false,
+		ignoreDotfiles: true,
 	}
 
 	repoCfg, err := config.Load(filepath.Join(repoRoot, ".gitrot.toml"))
@@ -271,6 +297,8 @@ func loadStagedConfig(repoRoot string, args []string) (stagedConfig, error) {
 	cfg.minCohesion = repoCfg.Thresholds.MinCohesion
 	cfg.ignoreTangled = repoCfg.Features.IgnoreTangled
 	cfg.ignoreSilo = repoCfg.Features.IgnoreSilo
+	cfg.hideName = repoCfg.Features.HideName
+	cfg.ignoreDotfiles = repoCfg.Features.IgnoreDotfiles
 
 	fs := flag.NewFlagSet("staged", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -280,6 +308,8 @@ func loadStagedConfig(repoRoot string, args []string) (stagedConfig, error) {
 	fs.IntVar(&cfg.maxFiles, "max-files", cfg.maxFiles, "ignore commits touching more than this many files")
 	fs.BoolVar(&cfg.ignoreTangled, "ignore-tangled", cfg.ignoreTangled, "disable tangled commit detection")
 	fs.BoolVar(&cfg.ignoreSilo, "ignore-silo", cfg.ignoreSilo, "disable silo detection (reserved)")
+	fs.BoolVar(&cfg.hideName, "hide-name", cfg.hideName, "obfuscate developer names in output")
+	fs.BoolVar(&cfg.ignoreDotfiles, "ignore-dotfiles", cfg.ignoreDotfiles, "exclude dotfiles and hidden directories from analysis")
 	if err := fs.Parse(args); err != nil {
 		return stagedConfig{}, err
 	}
@@ -374,7 +404,7 @@ func runMap(args []string) error {
 		return err
 	}
 
-	commits, err := repo.LoadCommits(cfg.history)
+	commits, err := repo.LoadCommits(cfg.history, cfg.ignoreDotfiles)
 	if err != nil {
 		return err
 	}
@@ -409,7 +439,7 @@ func runHotspot(args []string) error {
 		return err
 	}
 
-	commits, err := repo.LoadCommits(cfg.history)
+	commits, err := repo.LoadCommits(cfg.history, cfg.ignoreDotfiles)
 	if err != nil {
 		return err
 	}
@@ -436,9 +466,11 @@ func runHotspot(args []string) error {
 
 func loadHotspotConfig(repoRoot string, args []string) (hotspotConfig, error) {
 	cfg := hotspotConfig{
-		history:     2000,
-		minCoupling: 60,
-		maxFiles:    30,
+		history:        2000,
+		minCoupling:    60,
+		maxFiles:       30,
+		hideName:       false,
+		ignoreDotfiles: true,
 	}
 
 	repoCfg, err := config.Load(filepath.Join(repoRoot, ".gitrot.toml"))
@@ -448,17 +480,21 @@ func loadHotspotConfig(repoRoot string, args []string) (hotspotConfig, error) {
 	cfg.history = repoCfg.Thresholds.History
 	cfg.minCoupling = repoCfg.Thresholds.MinCoupling
 	cfg.maxFiles = repoCfg.Thresholds.MaxFiles
+	cfg.hideName = repoCfg.Features.HideName
+	cfg.ignoreDotfiles = repoCfg.Features.IgnoreDotfiles
 
 	fs := flag.NewFlagSet("hotspot", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	fs.IntVar(&cfg.history, "history", cfg.history, "number of past commits to analyze")
 	fs.Float64Var(&cfg.minCoupling, "min-coupling", cfg.minCoupling, "minimum coupling percentage [0-100]")
 	fs.IntVar(&cfg.maxFiles, "max-files", cfg.maxFiles, "ignore commits touching more than this many files")
+	fs.BoolVar(&cfg.hideName, "hide-name", cfg.hideName, "obfuscate developer names in output")
+	fs.BoolVar(&cfg.ignoreDotfiles, "ignore-dotfiles", cfg.ignoreDotfiles, "exclude dotfiles and hidden directories from analysis")
 	if err := fs.Parse(args); err != nil {
 		return hotspotConfig{}, err
 	}
 	if fs.NArg() > 1 {
-		return hotspotConfig{}, fmt.Errorf("usage: gitrot hotspot [--history 2000] [--min-coupling 60] [--max-files 30] [path]")
+		return hotspotConfig{}, fmt.Errorf("usage: gitrot hotspot [--history 2000] [--min-coupling 60] [--max-files 30] [--hide-name] [--ignore-dotfiles] [path]")
 	}
 	if fs.NArg() == 1 {
 		targetPath, err := normalizeHotspotTargetPath(repoRoot, fs.Arg(0))
@@ -482,9 +518,10 @@ func loadHotspotConfig(repoRoot string, args []string) (hotspotConfig, error) {
 
 func loadMapConfig(repoRoot string, args []string) (mapConfig, string, error) {
 	cfg := mapConfig{
-		history:  2000,
-		maxFiles: 30,
-		hideName: false,
+		history:        2000,
+		maxFiles:       30,
+		hideName:       false,
+		ignoreDotfiles: true,
 	}
 
 	repoCfg, err := config.Load(filepath.Join(repoRoot, ".gitrot.toml"))
@@ -494,15 +531,17 @@ func loadMapConfig(repoRoot string, args []string) (mapConfig, string, error) {
 	cfg.history = repoCfg.Thresholds.History
 	cfg.maxFiles = repoCfg.Thresholds.MaxFiles
 	cfg.hideName = repoCfg.Features.HideName
+	cfg.ignoreDotfiles = repoCfg.Features.IgnoreDotfiles
 
 	fs := flag.NewFlagSet("map", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	fs.BoolVar(&cfg.hideName, "hide-name", cfg.hideName, "obfuscate author names in map output")
+	fs.BoolVar(&cfg.hideName, "hide-name", cfg.hideName, "obfuscate developer names in output")
+	fs.BoolVar(&cfg.ignoreDotfiles, "ignore-dotfiles", cfg.ignoreDotfiles, "exclude dotfiles and hidden directories from analysis")
 	if err := fs.Parse(args); err != nil {
 		return mapConfig{}, "", err
 	}
 	if fs.NArg() != 1 {
-		return mapConfig{}, "", fmt.Errorf("usage: gitrot map [--hide-name] <file_path>")
+		return mapConfig{}, "", fmt.Errorf("usage: gitrot map [--hide-name] [--ignore-dotfiles] <file_path>")
 	}
 	targetFile := fs.Arg(0)
 
@@ -517,15 +556,15 @@ func loadMapConfig(repoRoot string, args []string) (mapConfig, string, error) {
 
 func printFindings(findings []analyzer.GroupedFinding, analyzedCommits int, cfg statusConfig) {
 	if len(findings) == 0 {
-		fmt.Printf("✓ No dissonance detected (Analyzed %d commits. Thresholds: >%.0f%% coupling, >=%d drift, ignoring commits with >%d files).\n", analyzedCommits, cfg.minCoupling, cfg.minDrift, cfg.maxFiles)
+		fmt.Printf("No coupling drift detected (Analyzed %s commits. Thresholds: >%s coupling, >=%s drift, ignoring commits with >%s files).\n", metricText(analyzedCommits), metricText(fmt.Sprintf("%.0f%%", cfg.minCoupling)), metricText(cfg.minDrift), metricText(cfg.maxFiles))
 		return
 	}
 
-	fmt.Println("⚠️  Dissonance Detected (Logical Coupling Broken)")
+	fmt.Printf("%s Coupling Drift Signals Detected\n", warningLabel("[WARNING]"))
 	fmt.Println()
 	for _, f := range findings {
-		fmt.Printf("[+%d Commits] %s (since %s)\n", f.Drift, f.Source, shortHash(f.LastSyncHash))
-		fmt.Println(" ↳ Historically coupled files that were left behind:")
+		fmt.Printf("[+%s commits] %s (since %s)\n", metricText(f.Drift), pathText(f.Source), metricText(shortHash(f.LastSyncHash)))
+		fmt.Println("   Historically coupled files with reduced co-change activity:")
 
 		displayCount := len(f.LeftBehind)
 		if displayCount > 3 {
@@ -533,17 +572,17 @@ func printFindings(findings []analyzer.GroupedFinding, analyzedCommits int, cfg 
 		}
 		for i := 0; i < displayCount; i++ {
 			lb := f.LeftBehind[i]
-			fmt.Printf("   - %s (%.0f%% coupling)\n", lb.Path, lb.Coupling*100)
+			fmt.Printf("   - %s (%s coupling)\n", pathText(lb.Path), metricText(fmt.Sprintf("%.0f%%", lb.Coupling*100)))
 		}
 		for i := 0; i < displayCount; i++ {
 			lb := f.LeftBehind[i]
 			if !lb.ContextLoss {
 				continue
 			}
-			fmt.Printf("   \x1b[31m🛑 Context Loss: Historically coupled by [%s], but recent drift caused by [%s].\x1b[0m\n", strings.Join(lb.HistoricalAuthors, ", "), strings.Join(lb.DriftAuthors, ", "))
+			fmt.Printf("   %s Knowledge Transfer Gap: %s is modifying this file, but %s usually handles the coupled files. Consider a review sync.\n", insightLabel("[INSIGHT]"), formatNames(lb.DriftAuthors, cfg.hideName), formatNames(lb.HistoricalAuthors, cfg.hideName))
 		}
 		if remaining := len(f.LeftBehind) - displayCount; remaining > 0 {
-			fmt.Printf("   ... and %d more files.\n", remaining)
+			fmt.Printf("   ... and %s more files.\n", metricText(remaining))
 		}
 		fmt.Println()
 	}
@@ -570,36 +609,27 @@ func shortHash(hash string) string {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "Usage:")
-	fmt.Fprintln(os.Stderr, "  gitrot status [--history 2000] [--min-coupling 60] [--min-cohesion 30] [--min-shared 3] [--min-drift 2] [--max-files 30] [--ignore-tangled] [--ignore-silo]")
-	fmt.Fprintln(os.Stderr, "  gitrot staged [--history 2000] [--min-coupling 60] [--min-cohesion 30] [--max-files 30] [--ignore-tangled] [--ignore-silo]")
-	fmt.Fprintln(os.Stderr, "  gitrot map [--hide-name] <file_path>")
-	fmt.Fprintln(os.Stderr, "  gitrot hotspot [--history 2000] [--min-coupling 60] [--max-files 30] [path]")
+	fmt.Fprintln(os.Stderr, "  gitrot status [--history 2000] [--min-coupling 60] [--min-cohesion 30] [--min-shared 3] [--min-drift 2] [--max-files 30] [--ignore-tangled] [--ignore-silo] [--hide-name] [--ignore-dotfiles]")
+	fmt.Fprintln(os.Stderr, "  gitrot staged [--history 2000] [--min-coupling 60] [--min-cohesion 30] [--max-files 30] [--ignore-tangled] [--ignore-silo] [--hide-name] [--ignore-dotfiles]")
+	fmt.Fprintln(os.Stderr, "  gitrot map [--hide-name] [--ignore-dotfiles] <file_path>")
+	fmt.Fprintln(os.Stderr, "  gitrot hotspot [--history 2000] [--min-coupling 60] [--max-files 30] [--hide-name] [--ignore-dotfiles] [path]")
 	fmt.Fprintln(os.Stderr, "  gitrot ack <file_path>")
 	fmt.Fprintln(os.Stderr, "  gitrot init")
 }
 
 func printKnowledgeMap(w io.Writer, knowledge analyzer.KnowledgeMap, hideName bool) {
-	fmt.Fprintf(w, "Knowledge Map for: %s\n", knowledge.Target)
+	fmt.Fprintf(w, "Knowledge Map for: %s\n", pathText(knowledge.Target))
 	fmt.Fprintln(w, "--------------------------------------------------")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Historically, when this file changes, the following files also change:")
 	for _, c := range knowledge.Coupled {
-		fmt.Fprintf(w, "  - %s (%.0f%% coupling)\n", c.Path, c.Coupling*100)
+		fmt.Fprintf(w, "  - %s (%s coupling)\n", pathText(c.Path), metricText(fmt.Sprintf("%.0f%%", c.Coupling*100)))
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Primary Knowledge Holders (Top Authors):")
 	for _, a := range knowledge.Authors {
-		author := a.Author
-		if hideName {
-			author = obfuscateAuthor(author)
-		}
-		fmt.Fprintf(w, "  - %s (%d commits)\n", author, a.Commits)
+		fmt.Fprintf(w, "  - %s (%s commits)\n", nameText(utils.FormatAuthorName(a.Author, hideName)), metricText(a.Commits))
 	}
-}
-
-func obfuscateAuthor(author string) string {
-	sum := sha256.Sum256([]byte(strings.TrimSpace(author)))
-	return "auth-" + hex.EncodeToString(sum[:4])
 }
 
 func printHotspots(w io.Writer, hotspots []analyzer.Hotspot, targetPath string) {
@@ -607,15 +637,15 @@ func printHotspots(w io.Writer, hotspots []analyzer.Hotspot, targetPath string) 
 	if targetPath == "" {
 		fmt.Fprintln(w, "Target: Entire Repository")
 	} else {
-		fmt.Fprintf(w, "Target: %s\n", targetPath)
+		fmt.Fprintf(w, "Target: %s\n", pathText(targetPath))
 	}
 	fmt.Fprintln(w, "--------------------------------------------------")
 	fmt.Fprintln(w)
 	for i, h := range hotspots {
-		fmt.Fprintf(w, "%d. %s\n", i+1, h.Path)
-		fmt.Fprintf(w, "   Score: %d | Coupled to: %d files | Changes: %d commits\n", h.Score, h.CouplingDegree, h.Churn)
+		fmt.Fprintf(w, "%d. %s\n", i+1, pathText(h.Path))
+		fmt.Fprintf(w, "   Score: %s | Coupled to: %s files | Changes: %s commits\n", metricText(h.Score), metricText(h.CouplingDegree), metricText(h.Churn))
 		if i == 0 {
-			fmt.Fprintln(w, "   Tip: High probability of being a \"God Class\".")
+			fmt.Fprintf(w, "   %s High coupling and churn indicate architectural debt. Consider splitting this module.\n", insightLabel("[INSIGHT]"))
 		}
 		fmt.Fprintln(w)
 	}
@@ -652,7 +682,7 @@ func evaluateStagedGuard(repo *git.Repository, cfg stagedConfig) (*tangledWarnin
 		return nil, nil
 	}
 
-	stagedFiles, err := repo.StagedFiles()
+	stagedFiles, err := repo.StagedFiles(cfg.ignoreDotfiles)
 	if err != nil {
 		return nil, err
 	}
@@ -660,7 +690,7 @@ func evaluateStagedGuard(repo *git.Repository, cfg stagedConfig) (*tangledWarnin
 		return nil, nil
 	}
 
-	commits, err := repo.LoadCommits(cfg.history)
+	commits, err := repo.LoadCommits(cfg.history, cfg.ignoreDotfiles)
 	if err != nil {
 		return nil, err
 	}
@@ -684,15 +714,26 @@ func evaluateStagedGuard(repo *git.Repository, cfg stagedConfig) (*tangledWarnin
 }
 
 func printTangledWarning(w io.Writer, warning tangledWarning) {
-	fmt.Fprintf(w, "❌ Tangled Commit Detected (Low Cohesion: %d%% / Threshold: %d%%)\n", warning.Cohesion, warning.Threshold)
-	fmt.Fprintf(w, "You are about to commit %d files that have rarely or never been committed together.\n", warning.StagedCount)
+	fmt.Fprintf(w, "%s Atypical Commit Composition (Cohesion: %s / Target: %s)\n", warningLabel("[WARNING]"), metricText(fmt.Sprintf("%d%%", warning.Cohesion)), metricText(fmt.Sprintf("%d%%", warning.Threshold)))
+	fmt.Fprintf(w, "This commit currently includes %s files that rarely change together.\n", metricText(warning.StagedCount))
 	if len(warning.ProblemFiles) > 0 {
-		fmt.Fprintln(w, "Staged files causing dissonance:")
+		fmt.Fprintln(w, "Files contributing most to low cohesion:")
 		for _, f := range warning.ProblemFiles {
-			fmt.Fprintf(w, " - %s\n", f)
+			fmt.Fprintf(w, " - %s\n", pathText(f))
 		}
 	}
-	fmt.Fprintln(w, "💡 Tip: Split this into smaller commits using `git add -p`, or bypass with `gitrot staged --ignore-tangled`.")
+	fmt.Fprintf(w, "%s Splitting these changes using 'git add -p' might make code review easier.\n", tipLabel("[TIP]"))
+}
+
+func formatNames(names []string, hideName bool) string {
+	if len(names) == 0 {
+		return nameText("unknown authors")
+	}
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		out = append(out, nameText(utils.FormatAuthorName(n, hideName)))
+	}
+	return strings.Join(out, ", ")
 }
 
 func normalizeAckPath(repoRoot, filePath string) (string, error) {

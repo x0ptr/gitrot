@@ -26,7 +26,7 @@ func TestLoadRespectsExplicitZeroMinCohesion(t *testing.T) {
 func TestLoadParsesFeatures(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".gitrot.toml")
-	content := []byte("[features]\nignore_tangled = true\nignore_silo = true\nhide_name = true\n")
+	content := []byte("[features]\nignore_tangled = true\nignore_silo = true\nhide_name = true\nignore_dotfiles = false\n")
 	if err := os.WriteFile(path, content, 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -35,7 +35,7 @@ func TestLoadParsesFeatures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	if !cfg.Features.IgnoreTangled || !cfg.Features.IgnoreSilo || !cfg.Features.HideName {
+	if !cfg.Features.IgnoreTangled || !cfg.Features.IgnoreSilo || !cfg.Features.HideName || cfg.Features.IgnoreDotfiles {
 		t.Fatalf("expected both feature flags true, got %#v", cfg.Features)
 	}
 }
@@ -65,7 +65,8 @@ min_cohesion = 30    # Minimum cohesion percentage (0-100) for staged commits
 [features]
 ignore_tangled = false  # Set to true to disable Tangled Commit detection (` + "`gitrot staged`" + `)
 ignore_silo = false     # Set to true to disable Context Loss/Silo detection
-hide_name = false       # Set to true to obfuscate author names in ` + "`gitrot map`" + `
+hide_name = false       # Set to true to obfuscate developer names in output
+ignore_dotfiles = true # Set to true to ignore dotfiles and hidden directories in analysis
 `
 
 	if string(got) != want {

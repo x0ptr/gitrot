@@ -7,6 +7,7 @@ It currently covers:
 - **Tangled Commit Detection**: staged files in one commit have low historical cohesion.
 - **Context Loss (Knowledge Silo)**: drift is driven by authors with no historical overlap on the coupled file pair.
 - **Knowledge Map**: quick coupling and ownership discovery for a specific file.
+- **Refactoring Hotspots**: files with high churn and high coupling degree.
 
 ## Installation
 
@@ -18,10 +19,10 @@ go install github.com/x0ptr/gitrot/cmd/gitrot@latest
 
 ```bash
 gitrot init
-gitrot status [--history 2000] [--min-coupling 60] [--min-cohesion 30] [--min-shared 3] [--min-drift 2] [--max-files 30] [--ignore-tangled] [--ignore-silo]
-gitrot staged [--history 2000] [--min-coupling 60] [--min-cohesion 30] [--max-files 30] [--ignore-tangled] [--ignore-silo]
-gitrot map [--hide-name] <file_path>
-gitrot hotspot [--history 2000] [--min-coupling 60] [--max-files 30] [path]
+gitrot status [--history 2000] [--min-coupling 60] [--min-cohesion 30] [--min-shared 3] [--min-drift 2] [--max-files 30] [--ignore-tangled] [--ignore-silo] [--hide-name] [--ignore-dotfiles]
+gitrot staged [--history 2000] [--min-coupling 60] [--min-cohesion 30] [--max-files 30] [--ignore-tangled] [--ignore-silo] [--hide-name] [--ignore-dotfiles]
+gitrot map [--hide-name] [--ignore-dotfiles] <file_path>
+gitrot hotspot [--history 2000] [--min-coupling 60] [--max-files 30] [--hide-name] [--ignore-dotfiles] [path]
 gitrot ack <file_path>
 ```
 
@@ -29,7 +30,7 @@ gitrot ack <file_path>
 
 `status` analyzes commit history and prints drift findings.
 
-When enabled (default), it also evaluates staged cohesion at the end and prints a warning if the staged set looks tangled.
+When enabled (default), it also evaluates staged cohesion at the end and prints a warning if the staged set looks atypical.
 Unlike `staged`, `status` does not fail the process for tangled commits.
 
 ### Context Loss
@@ -38,7 +39,7 @@ For each drift finding `(A -> B)`:
 - `HistoricalAuthors`: authors who historically committed `A` and `B` together.
 - `DriftAuthors`: authors from drift commits on `A` (including `Co-authored-by` and `Reviewed-by` trailers).
 
-A Context Loss warning is shown only when there is no intersection between these sets.
+A knowledge-transfer insight is shown only when there is no intersection between these sets.
 
 Disable with:
 
@@ -71,7 +72,8 @@ Prints a discovery view for one file:
 - top historically coupled files (discovery threshold: `> 20%`)
 - top knowledge holders by commit participation count (full `git user.name`)
 
-Use `--hide-name` (or `[features].hide_name = true`) to obfuscate author names as deterministic IDs (`auth-<8hex>`).
+Use `--hide-name` (or `[features].hide_name = true`) to obfuscate developer names as deterministic IDs (`usr-<8hex>`).
+This applies globally anywhere names are printed (including `status` insights).
 
 If no historical data is available for the target, it prints:
 
@@ -89,6 +91,24 @@ Prints top refactoring hotspots using only Git metadata:
 Files with fewer than 5 commits are ignored as low-churn noise.
 Sorted by score (desc), limited to top 10.
 Optionally pass a path prefix (for example `src/api`) to restrict which hotspot files are shown.
+
+Output format:
+
+```text
+Refactoring Hotspots (High Coupling + High Churn)
+Target: Entire Repository
+--------------------------------------------------
+...
+```
+
+With a path filter:
+
+```text
+Refactoring Hotspots (High Coupling + High Churn)
+Target: src/api
+--------------------------------------------------
+...
+```
 
 If no file exceeds the current thresholds:
 
@@ -114,8 +134,11 @@ min_cohesion = 30    # Minimum cohesion percentage (0-100) for staged commits
 [features]
 ignore_tangled = false  # Set to true to disable Tangled Commit detection (`gitrot staged`)
 ignore_silo = false     # Set to true to disable Context Loss/Silo detection
-hide_name = false       # Set to true to obfuscate author names in `gitrot map`
+hide_name = false       # Set to true to obfuscate developer names in output
+ignore_dotfiles = true # Set to true to ignore dotfiles and hidden directories in analysis
 ```
+
+By default, `ignore_dotfiles = true`, so files like `.gitignore`, `.eslintrc`, and paths under hidden directories (for example `.github/...`) are excluded from all analyses.
 
 ## Precedence
 

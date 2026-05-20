@@ -39,7 +39,7 @@ func NewRepository(path string) (*Repository, error) {
 	return &Repository{root: root}, nil
 }
 
-func (r *Repository) LoadCommits(limit int) ([]Commit, error) {
+func (r *Repository) LoadCommits(limit int, ignoreDotfiles bool) ([]Commit, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 
@@ -67,7 +67,7 @@ func (r *Repository) LoadCommits(limit int) ([]Commit, error) {
 		return nil, fmt.Errorf("git log failed: %w", err)
 	}
 
-	return parseCommits(stdout.Bytes(), limit)
+	return parseCommits(stdout.Bytes(), limit, ignoreDotfiles)
 }
 
 func (r *Repository) Root() string {
@@ -88,7 +88,7 @@ func (r *Repository) HeadHash() (string, error) {
 	return hash, nil
 }
 
-func (r *Repository) StagedFiles() ([]string, error) {
+func (r *Repository) StagedFiles(ignoreDotfiles bool) ([]string, error) {
 	out, err := run(r.root, 10*time.Second, "diff", "--cached", "--name-only", "--diff-filter=ACMRD", "--no-renames")
 	if err != nil {
 		return nil, err
@@ -105,6 +105,9 @@ func (r *Repository) StagedFiles() ([]string, error) {
 		if _, ok := seen[line]; ok {
 			continue
 		}
+		if ignoreDotfiles && isDotfile(line) {
+			continue
+		}
 		seen[line] = struct{}{}
 		files = append(files, line)
 	}
@@ -115,7 +118,7 @@ func (r *Repository) StagedFiles() ([]string, error) {
 	return files, nil
 }
 
-func parseCommits(raw []byte, capHint int) ([]Commit, error) {
+func parseCommits(raw []byte, capHint int, ignoreDotfiles bool) ([]Commit, error) {
 	commits := make([]Commit, 0, capHint)
 	sc := bufio.NewScanner(bytes.NewReader(raw))
 
@@ -185,6 +188,9 @@ func parseCommits(raw []byte, capHint int) ([]Commit, error) {
 			continue
 		}
 		if currentHash != "" {
+			if ignoreDotfiles && isDotfile(line) {
+				continue
+			}
 			fileSet[line] = struct{}{}
 		}
 	}
@@ -240,6 +246,21 @@ func parseAuthorName(raw string) string {
 	}
 	s = strings.Trim(s, " ,;:")
 	return s
+}
+
+func isDotfile(path string) bool {
+	normalized := strings.ReplaceAll(path, "\\", "/")
+	parts := strings.Split(normalized, "/")
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" || part == "." || part == ".." {
+			continue
+		}
+		if strings.HasPrefix(part, ".") {
+			return true
+		}
+	}
+	return false
 }
 
 func run(path string, timeout time.Duration, args ...string) (string, error) {

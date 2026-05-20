@@ -23,9 +23,10 @@ type Thresholds struct {
 }
 
 type Features struct {
-	IgnoreTangled bool `toml:"ignore_tangled"`
-	IgnoreSilo    bool `toml:"ignore_silo"`
-	HideName      bool `toml:"hide_name"`
+	IgnoreTangled  bool `toml:"ignore_tangled"`
+	IgnoreSilo     bool `toml:"ignore_silo"`
+	HideName       bool `toml:"hide_name"`
+	IgnoreDotfiles bool `toml:"ignore_dotfiles"`
 }
 
 func Default() File {
@@ -39,9 +40,10 @@ func Default() File {
 			MinDrift:    2,
 		},
 		Features: Features{
-			IgnoreTangled: false,
-			IgnoreSilo:    false,
-			HideName:      false,
+			IgnoreTangled:  false,
+			IgnoreSilo:     false,
+			HideName:       false,
+			IgnoreDotfiles: true,
 		},
 	}
 }
@@ -122,6 +124,7 @@ func render(cfg File) string {
 	fmt.Fprintf(&b, "[features]\n")
 	fmt.Fprintf(&b, "ignore_tangled = %t  # Set to true to disable Tangled Commit detection (`gitrot staged`)\n", f.IgnoreTangled)
 	fmt.Fprintf(&b, "ignore_silo = %t     # Set to true to disable Context Loss/Silo detection\n", f.IgnoreSilo)
-	fmt.Fprintf(&b, "hide_name = %t       # Set to true to obfuscate author names in `gitrot map`\n", f.HideName)
+	fmt.Fprintf(&b, "hide_name = %t       # Set to true to obfuscate developer names in output\n", f.HideName)
+	fmt.Fprintf(&b, "ignore_dotfiles = %t # Set to true to ignore dotfiles and hidden directories in analysis\n", f.IgnoreDotfiles)
 	return b.String()
 }
