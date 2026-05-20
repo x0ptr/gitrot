@@ -1,10 +1,14 @@
 package analyzer
 
-import "sort"
+import (
+	"sort"
+	"strings"
+)
 
 type Commit struct {
-	Hash  string
-	Files []string
+	Hash    string
+	Files   []string
+	Authors []string
 }
 
 type Config struct {
@@ -12,21 +16,28 @@ type Config struct {
 	MinSharedCommits  int
 	MinDrift          int
 	MaxFilesPerCommit int
+	IgnoreSilo        bool
 }
 
 type Finding struct {
-	Source       string
-	CoupledTo    string
-	Coupling     float64
-	Shared       int
-	Drift        int
-	LastSyncHash string
+	Source            string
+	CoupledTo         string
+	Coupling          float64
+	Shared            int
+	Drift             int
+	LastSyncHash      string
+	ContextLoss       bool
+	HistoricalAuthors []string
+	DriftAuthors      []string
 }
 
 type LeftBehind struct {
-	Path     string
-	Coupling float64
-	Shared   int
+	Path              string
+	Coupling          float64
+	Shared            int
+	ContextLoss       bool
+	HistoricalAuthors []string
+	DriftAuthors      []string
 }
 
 type GroupedFinding struct {
@@ -40,6 +51,7 @@ func Analyze(commits []Commit, cfg Config) []Finding {
 	fileCommitCount := map[string]int{}
 	fileCommitIndices := map[string][]int{}
 	pairCounts := map[string]map[string]int{}
+	pairHistoricalAuthors := map[string]map[string]map[string]struct{}{}
 	lastSyncIndex := map[string]map[string]int{}
 
 	for i, c := range commits {
@@ -50,24 +62,33 @@ func Analyze(commits []Commit, cfg Config) []Finding {
 			continue
 		}
 
-		sort.Strings(c.Files)
-		for _, a := range c.Files {
+		files := uniqueSorted(c.Files)
+		for _, a := range files {
 			fileCommitCount[a]++
 			fileCommitIndices[a] = append(fileCommitIndices[a], i)
 		}
 
-		for _, a := range c.Files {
+		for _, a := range files {
 			if pairCounts[a] == nil {
 				pairCounts[a] = map[string]int{}
+			}
+			if pairHistoricalAuthors[a] == nil {
+				pairHistoricalAuthors[a] = map[string]map[string]struct{}{}
 			}
 			if lastSyncIndex[a] == nil {
 				lastSyncIndex[a] = map[string]int{}
 			}
-			for _, b := range c.Files {
+			for _, b := range files {
 				if a == b {
 					continue
 				}
 				pairCounts[a][b]++
+				if pairHistoricalAuthors[a][b] == nil {
+					pairHistoricalAuthors[a][b] = map[string]struct{}{}
+				}
+				for _, author := range c.Authors {
+					pairHistoricalAuthors[a][b][author] = struct{}{}
+				}
 				if _, ok := lastSyncIndex[a][b]; !ok {
 					lastSyncIndex[a][b] = i
 				}
@@ -102,13 +123,25 @@ func Analyze(commits []Commit, cfg Config) []Finding {
 				continue
 			}
 
+			var historicalAuthors []string
+			var driftAuthors []string
+			contextLoss := false
+			if !cfg.IgnoreSilo {
+				historicalAuthors = sortedKeys(pairHistoricalAuthors[a][b])
+				driftAuthors = driftAuthorsForPair(commits, fileCommitIndices[a], syncIdx, b)
+				contextLoss = len(historicalAuthors) > 0 && len(driftAuthors) > 0 && !hasAnyAuthorOverlap(historicalAuthors, driftAuthors)
+			}
+
 			findings = append(findings, Finding{
-				Source:       a,
-				CoupledTo:    b,
-				Coupling:     coupling,
-				Shared:       shared,
-				Drift:        drift,
-				LastSyncHash: commits[syncIdx].Hash,
+				Source:            a,
+				CoupledTo:         b,
+				Coupling:          coupling,
+				Shared:            shared,
+				Drift:             drift,
+				LastSyncHash:      commits[syncIdx].Hash,
+				ContextLoss:       contextLoss,
+				HistoricalAuthors: historicalAuthors,
+				DriftAuthors:      driftAuthors,
 			})
 		}
 	}
@@ -133,9 +166,12 @@ func GroupBySource(findings []Finding) []GroupedFinding {
 		}
 
 		group.LeftBehind = append(group.LeftBehind, LeftBehind{
-			Path:     f.CoupledTo,
-			Coupling: f.Coupling,
-			Shared:   f.Shared,
+			Path:              f.CoupledTo,
+			Coupling:          f.Coupling,
+			Shared:            f.Shared,
+			ContextLoss:       f.ContextLoss,
+			HistoricalAuthors: f.HistoricalAuthors,
+			DriftAuthors:      f.DriftAuthors,
 		})
 
 		if f.Drift > group.Drift || (f.Drift == group.Drift && f.Coupling > representativeCoupling[f.Source]) {
@@ -171,4 +207,56 @@ func GroupBySource(findings []Finding) []GroupedFinding {
 
 func countLessThan(sorted []int, v int) int {
 	return sort.Search(len(sorted), func(i int) bool { return sorted[i] >= v })
+}
+
+func sortedKeys(set map[string]struct{}) []string {
+	if len(set) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func driftAuthorsForPair(commits []Commit, sourceIndices []int, syncIdx int, coupledTo string) []string {
+	limit := countLessThan(sourceIndices, syncIdx)
+	authors := map[string]struct{}{}
+	for i := 0; i < limit; i++ {
+		idx := sourceIndices[i]
+		if commitTouchesFile(commits[idx].Files, coupledTo) {
+			continue
+		}
+		for _, author := range commits[idx].Authors {
+			if author == "" {
+				continue
+			}
+			authors[author] = struct{}{}
+		}
+	}
+	return sortedKeys(authors)
+}
+
+func commitTouchesFile(files []string, file string) bool {
+	for _, f := range files {
+		if f == file {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAnyAuthorOverlap(a []string, b []string) bool {
+	set := make(map[string]struct{}, len(a))
+	for _, author := range a {
+		set[strings.ToLower(author)] = struct{}{}
+	}
+	for _, author := range b {
+		if _, ok := set[strings.ToLower(author)]; ok {
+			return true
+		}
+	}
+	return false
 }

@@ -1,25 +1,11 @@
-# 🥀 gitrot
+# gitrot
 
-![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)
-![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
-![Release](https://img.shields.io/github/v/release/x0ptr/gitrot)
+`gitrot` is a local CLI for detecting semantic decay from Git history.
 
-`gitrot` is a CLI tool that detects semantic decay in a Git repository by analyzing historical file coupling and current drift.
-
-![gitrot in action](./assets/demo.gif)
-
-## The Problem
-
-Code evolves with implicit dependencies:
-
-- Source code is coupled to its documentation.
-- Feature implementations are coupled to their unit tests.
-
-When one file changes repeatedly while historically coupled files stop changing, dissonance increases. Static analysis and linters typically do not detect this.
-
-## Why gitrot?
-
-Unlike heavy enterprise dashboards (like CodeScene or SonarQube) that require CI/CD integration and cloud accounts, `gitrot` is a minimalist, Unix-native CLI. It runs locally, executes in milliseconds, and can be piped directly into AI agents to auto-heal your repository.
+It currently covers:
+- **Dissonance Drift**: a file keeps changing while historically coupled files are left behind.
+- **Tangled Commit Detection**: staged files in one commit have low historical cohesion.
+- **Context Loss (Knowledge Silo)**: drift is driven by authors with no historical overlap on the coupled file pair.
 
 ## Installation
 
@@ -27,59 +13,86 @@ Unlike heavy enterprise dashboards (like CodeScene or SonarQube) that require CI
 go install github.com/x0ptr/gitrot/cmd/gitrot@latest
 ```
 
-## Quick Start
-
-1. Open a Git repository.
-2. Initialize config:
-   ```bash
-   gitrot init
-   ```
-3. Run analysis:
-   ```bash
-   gitrot status
-   ```
-
-## 🤖 Auto-Healing with AI Agents (The Unix Way)
-
-`gitrot` tells you **what** drifted. An AI agent can help decide **how** to repair it. Use one of these two modes intentionally:
-
-### ✅ The Safe Way (Recommended)
+## Commands
 
 ```bash
-copilot "Please fix these dissonance issues: $(gitrot status)"
+gitrot init
+gitrot status [--history 2000] [--min-coupling 60] [--min-cohesion 30] [--min-shared 3] [--min-drift 2] [--max-files 30] [--ignore-tangled] [--ignore-silo]
+gitrot staged [--history 2000] [--min-coupling 60] [--min-cohesion 30] [--max-files 30] [--ignore-tangled] [--ignore-silo]
+gitrot ack <file_path>
 ```
 
-Using command substitution (`$(...)`) passes `gitrot` output as a normal string argument to `copilot`.
-Because input is passed as an argument, `stdin` stays attached to your keyboard, so the agent can pause and ask for confirmation (for example `[y/N]`) before applying patches or running `git apply`.
+## `gitrot status`
 
-### ⚠️ The Unsafe / Power-User Way (Danger Zone)
+`status` analyzes commit history and prints drift findings.
+
+When enabled (default), it also evaluates staged cohesion at the end and prints a warning if the staged set looks tangled.
+Unlike `staged`, `status` does not fail the process for tangled commits.
+
+### Context Loss
+
+For each drift finding `(A -> B)`:
+- `HistoricalAuthors`: authors who historically committed `A` and `B` together.
+- `DriftAuthors`: authors from drift commits on `A` (including `Co-authored-by` and `Reviewed-by` trailers).
+
+A Context Loss warning is shown only when there is no intersection between these sets.
+
+Disable with:
 
 ```bash
-gitrot status | copilot --yolo
-# or
-copilot -p "$(gitrot status)" --yolo
+gitrot status --ignore-silo
 ```
 
-This is for CI/CD automation or developers who explicitly want zero prompts.
-With direct piping plus `--yolo`, safety confirmations are bypassed: the agent reads the dissonance, fetches diffs, and writes changes directly to your filesystem.
-Use this only on a clean working tree so you can quickly review and revert if the model hallucinates.
+## `gitrot staged` (pre-commit guard)
+
+Use in a Git pre-commit hook to block tangled commits.
+
+Behavior:
+1. If `--ignore-tangled=true`, exits `0` immediately.
+2. Reads staged files from `git diff --cached --name-only`.
+3. Ignores staged files with no Git history.
+4. If historical staged file count `< 2`, exits `0`.
+5. Computes cohesion from pair coupling against `min_coupling`.
+6. If `N >= 3` and cohesion `< min_cohesion`, prints a warning to `stderr` and exits `1`.
+7. Otherwise exits `0` silently.
+
+Bypass once:
+
+```bash
+gitrot staged --ignore-tangled
+```
 
 ## Configuration
 
-`gitrot init` creates `.gitrot.toml` with these thresholds:
+`gitrot init` creates `.gitrot.toml`:
 
-- `history`
-- `max_files`
-- `min_coupling`
-- `min_shared`
-- `min_drift`
+```toml
+# .gitrot.toml - Configuration for gitrot
 
-## Acknowledge Current State
+[thresholds]
+history = 2000       # Number of past commits to analyze
+max_files = 30       # Ignore merge commits or mass refactors touching >30 files
+min_coupling = 60    # Files must have been committed together >= 60% of the time
+min_shared = 3       # Files must have at least 3 shared commits to be considered coupled
+min_drift = 2        # Warn if a file is left behind by >= 2 commits
+min_cohesion = 30    # Minimum cohesion percentage (0-100) for staged commits
+
+[features]
+ignore_tangled = false  # Set to true to disable Tangled Commit detection (`gitrot staged`)
+ignore_silo = false     # Set to true to disable Context Loss/Silo detection
+```
+
+## Precedence
+
+Configuration precedence is:
+1. CLI flags provided explicitly
+2. `.gitrot.toml`
+3. Built-in defaults
+
+## Acknowledging a file
 
 ```bash
 gitrot ack <file_path>
 ```
 
-This writes the current `HEAD` hash for the target file into `.gitrot-state.json`.
-
-Commit both `.gitrot.toml` and `.gitrot-state.json` so the repository uses shared thresholds and acknowledgements.
+This writes the current `HEAD` hash for the file into `.gitrot-state.json`.

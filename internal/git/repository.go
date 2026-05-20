@@ -6,15 +6,19 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 )
 
 const marker = "__GITROT_COMMIT__"
+const fieldSep = "\x1f"
+const trailerSep = "\x1e"
 
 type Commit struct {
-	Hash  string
-	Files []string
+	Hash    string
+	Files   []string
+	Authors []string
 }
 
 type Repository struct {
@@ -44,7 +48,7 @@ func (r *Repository) LoadCommits(limit int) ([]Commit, error) {
 		"log",
 		fmt.Sprintf("-n%d", limit),
 		"--name-only",
-		"--pretty=format:" + marker + "%H %P",
+		"--pretty=format:" + marker + "%H" + fieldSep + "%P" + fieldSep + "%an" + fieldSep + "%(trailers:key=Co-authored-by,valueonly,separator=%x1e)" + fieldSep + "%(trailers:key=Reviewed-by,valueonly,separator=%x1e)",
 		"--no-renames",
 		"--",
 	}
@@ -84,12 +88,40 @@ func (r *Repository) HeadHash() (string, error) {
 	return hash, nil
 }
 
+func (r *Repository) StagedFiles() ([]string, error) {
+	out, err := run(r.root, 10*time.Second, "diff", "--cached", "--name-only", "--diff-filter=ACMRD", "--no-renames")
+	if err != nil {
+		return nil, err
+	}
+
+	seen := map[string]struct{}{}
+	files := make([]string, 0)
+	sc := bufio.NewScanner(strings.NewReader(out))
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		if _, ok := seen[line]; ok {
+			continue
+		}
+		seen[line] = struct{}{}
+		files = append(files, line)
+	}
+	if err := sc.Err(); err != nil {
+		return nil, fmt.Errorf("read staged files: %w", err)
+	}
+	sort.Strings(files)
+	return files, nil
+}
+
 func parseCommits(raw []byte, capHint int) ([]Commit, error) {
 	commits := make([]Commit, 0, capHint)
 	sc := bufio.NewScanner(bytes.NewReader(raw))
 
 	var currentHash string
 	currentParentCount := 0
+	currentAuthors := []string{}
 	fileSet := map[string]struct{}{}
 
 	flush := func() {
@@ -101,8 +133,9 @@ func parseCommits(raw []byte, capHint int) ([]Commit, error) {
 			files = append(files, f)
 		}
 		commits = append(commits, Commit{
-			Hash:  currentHash,
-			Files: files,
+			Hash:    currentHash,
+			Files:   files,
+			Authors: append([]string(nil), currentAuthors...),
 		})
 	}
 
@@ -114,16 +147,40 @@ func parseCommits(raw []byte, capHint int) ([]Commit, error) {
 		if strings.HasPrefix(line, marker) {
 			flush()
 			payload := strings.TrimSpace(strings.TrimPrefix(line, marker))
-			parts := strings.Fields(payload)
-			if len(parts) == 0 {
+			if payload == "" {
 				currentHash = ""
 				currentParentCount = 0
+				currentAuthors = nil
 				fileSet = map[string]struct{}{}
 				continue
 			}
 
-			currentHash = parts[0]
-			currentParentCount = len(parts) - 1
+			fields := strings.SplitN(payload, fieldSep, 5)
+			if len(fields) >= 3 {
+				currentHash = strings.TrimSpace(fields[0])
+				currentParentCount = countParents(fields[1])
+				co := ""
+				reviewed := ""
+				if len(fields) > 3 {
+					co = fields[3]
+				}
+				if len(fields) > 4 {
+					reviewed = fields[4]
+				}
+				currentAuthors = mergeAuthors(fields[2], co, reviewed)
+			} else {
+				parts := strings.Fields(payload)
+				if len(parts) == 0 {
+					currentHash = ""
+					currentParentCount = 0
+					currentAuthors = nil
+					fileSet = map[string]struct{}{}
+					continue
+				}
+				currentHash = parts[0]
+				currentParentCount = len(parts) - 1
+				currentAuthors = nil
+			}
 			fileSet = map[string]struct{}{}
 			continue
 		}
@@ -138,6 +195,55 @@ func parseCommits(raw []byte, capHint int) ([]Commit, error) {
 	}
 
 	return commits, nil
+}
+
+func countParents(raw string) int {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0
+	}
+	return len(strings.Fields(raw))
+}
+
+func mergeAuthors(primary, coAuthored, reviewed string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, 4)
+	add := func(raw string) {
+		name := parseAuthorName(raw)
+		if name == "" {
+			return
+		}
+		key := strings.ToLower(name)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		out = append(out, name)
+	}
+	add(primary)
+	for _, part := range strings.Split(coAuthored, trailerSep) {
+		add(part)
+	}
+	for _, part := range strings.Split(reviewed, trailerSep) {
+		add(part)
+	}
+	return out
+}
+
+func parseAuthorName(raw string) string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return ""
+	}
+	if idx := strings.Index(s, "<"); idx >= 0 {
+		s = strings.TrimSpace(s[:idx])
+	}
+	fields := strings.Fields(s)
+	if len(fields) == 0 {
+		return ""
+	}
+	name := strings.Trim(fields[0], " ,;:")
+	return name
 }
 
 func run(path string, timeout time.Duration, args ...string) (string, error) {
