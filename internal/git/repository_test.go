@@ -19,7 +19,7 @@ func TestParseCommitsCollectsPrimaryAndTrailerAuthors(t *testing.T) {
 	if len(commits[0].Authors) != 4 {
 		t.Fatalf("expected 4 authors, got %#v", commits[0].Authors)
 	}
-	expected := []string{"Alice", "Bob", "Charlie", "Dora"}
+	expected := []string{"Alice Doe", "Bob Builder", "Charlie", "Dora"}
 	for i := range expected {
 		if commits[0].Authors[i] != expected[i] {
 			t.Fatalf("unexpected author at %d: got %q want %q", i, commits[0].Authors[i], expected[i])

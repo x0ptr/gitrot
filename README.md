@@ -20,7 +20,7 @@ go install github.com/x0ptr/gitrot/cmd/gitrot@latest
 gitrot init
 gitrot status [--history 2000] [--min-coupling 60] [--min-cohesion 30] [--min-shared 3] [--min-drift 2] [--max-files 30] [--ignore-tangled] [--ignore-silo]
 gitrot staged [--history 2000] [--min-coupling 60] [--min-cohesion 30] [--max-files 30] [--ignore-tangled] [--ignore-silo]
-gitrot map <file_path>
+gitrot map [--hide-name] <file_path>
 gitrot ack <file_path>
 ```
 
@@ -68,7 +68,9 @@ gitrot staged --ignore-tangled
 
 Prints a discovery view for one file:
 - top historically coupled files (discovery threshold: `> 20%`)
-- top knowledge holders by commit participation count
+- top knowledge holders by commit participation count (full `git user.name`)
+
+Use `--hide-name` (or `[features].hide_name = true`) to obfuscate author names as deterministic IDs (`auth-<8hex>`).
 
 If no historical data is available for the target, it prints:
 
@@ -94,6 +96,7 @@ min_cohesion = 30    # Minimum cohesion percentage (0-100) for staged commits
 [features]
 ignore_tangled = false  # Set to true to disable Tangled Commit detection (`gitrot staged`)
 ignore_silo = false     # Set to true to disable Context Loss/Silo detection
+hide_name = false       # Set to true to obfuscate author names in `gitrot map`
 ```
 
 ## Precedence

@@ -25,6 +25,7 @@ type Thresholds struct {
 type Features struct {
 	IgnoreTangled bool `toml:"ignore_tangled"`
 	IgnoreSilo    bool `toml:"ignore_silo"`
+	HideName      bool `toml:"hide_name"`
 }
 
 func Default() File {
@@ -40,6 +41,7 @@ func Default() File {
 		Features: Features{
 			IgnoreTangled: false,
 			IgnoreSilo:    false,
+			HideName:      false,
 		},
 	}
 }
@@ -120,5 +122,6 @@ func render(cfg File) string {
 	fmt.Fprintf(&b, "[features]\n")
 	fmt.Fprintf(&b, "ignore_tangled = %t  # Set to true to disable Tangled Commit detection (`gitrot staged`)\n", f.IgnoreTangled)
 	fmt.Fprintf(&b, "ignore_silo = %t     # Set to true to disable Context Loss/Silo detection\n", f.IgnoreSilo)
+	fmt.Fprintf(&b, "hide_name = %t       # Set to true to obfuscate author names in `gitrot map`\n", f.HideName)
 	return b.String()
 }

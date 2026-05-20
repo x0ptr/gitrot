@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"io"
@@ -37,6 +39,7 @@ type stagedConfig struct {
 type mapConfig struct {
 	history  int
 	maxFiles int
+	hideName bool
 }
 
 type exitCoder interface {
@@ -348,21 +351,16 @@ func runAck(args []string) error {
 }
 
 func runMap(args []string) error {
-	if len(args) != 1 {
-		return fmt.Errorf("usage: gitrot map <file_path>")
-	}
-
 	repo, err := git.NewRepository(".")
 	if err != nil {
 		return err
 	}
 
-	targetFile, err := normalizeAckPath(repo.Root(), args[0])
+	cfg, targetFile, err := loadMapConfig(repo.Root(), args)
 	if err != nil {
 		return err
 	}
-
-	cfg, err := loadMapConfig(repo.Root())
+	targetFile, err = normalizeAckPath(repo.Root(), targetFile)
 	if err != nil {
 		return err
 	}
@@ -387,30 +385,43 @@ func runMap(args []string) error {
 		return commandExit{code: 1}
 	}
 
-	printKnowledgeMap(os.Stdout, knowledge)
+	printKnowledgeMap(os.Stdout, knowledge, cfg.hideName)
 	return nil
 }
 
-func loadMapConfig(repoRoot string) (mapConfig, error) {
+func loadMapConfig(repoRoot string, args []string) (mapConfig, string, error) {
 	cfg := mapConfig{
 		history:  2000,
 		maxFiles: 30,
+		hideName: false,
 	}
 
 	repoCfg, err := config.Load(filepath.Join(repoRoot, ".gitrot.toml"))
 	if err != nil {
-		return mapConfig{}, err
+		return mapConfig{}, "", err
 	}
 	cfg.history = repoCfg.Thresholds.History
 	cfg.maxFiles = repoCfg.Thresholds.MaxFiles
+	cfg.hideName = repoCfg.Features.HideName
+
+	fs := flag.NewFlagSet("map", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	fs.BoolVar(&cfg.hideName, "hide-name", cfg.hideName, "obfuscate author names in map output")
+	if err := fs.Parse(args); err != nil {
+		return mapConfig{}, "", err
+	}
+	if fs.NArg() != 1 {
+		return mapConfig{}, "", fmt.Errorf("usage: gitrot map [--hide-name] <file_path>")
+	}
+	targetFile := fs.Arg(0)
 
 	if cfg.history < 1 {
-		return mapConfig{}, fmt.Errorf("history must be >= 1")
+		return mapConfig{}, "", fmt.Errorf("history must be >= 1")
 	}
 	if cfg.maxFiles < 1 {
-		return mapConfig{}, fmt.Errorf("max_files must be >= 1")
+		return mapConfig{}, "", fmt.Errorf("max_files must be >= 1")
 	}
-	return cfg, nil
+	return cfg, targetFile, nil
 }
 
 func printFindings(findings []analyzer.GroupedFinding, analyzedCommits int, cfg statusConfig) {
@@ -470,12 +481,12 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "Usage:")
 	fmt.Fprintln(os.Stderr, "  gitrot status [--history 2000] [--min-coupling 60] [--min-cohesion 30] [--min-shared 3] [--min-drift 2] [--max-files 30] [--ignore-tangled] [--ignore-silo]")
 	fmt.Fprintln(os.Stderr, "  gitrot staged [--history 2000] [--min-coupling 60] [--min-cohesion 30] [--max-files 30] [--ignore-tangled] [--ignore-silo]")
-	fmt.Fprintln(os.Stderr, "  gitrot map <file_path>")
+	fmt.Fprintln(os.Stderr, "  gitrot map [--hide-name] <file_path>")
 	fmt.Fprintln(os.Stderr, "  gitrot ack <file_path>")
 	fmt.Fprintln(os.Stderr, "  gitrot init")
 }
 
-func printKnowledgeMap(w io.Writer, knowledge analyzer.KnowledgeMap) {
+func printKnowledgeMap(w io.Writer, knowledge analyzer.KnowledgeMap, hideName bool) {
 	fmt.Fprintf(w, "Knowledge Map for: %s\n", knowledge.Target)
 	fmt.Fprintln(w, "--------------------------------------------------")
 	fmt.Fprintln(w)
@@ -486,8 +497,17 @@ func printKnowledgeMap(w io.Writer, knowledge analyzer.KnowledgeMap) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Primary Knowledge Holders (Top Authors):")
 	for _, a := range knowledge.Authors {
-		fmt.Fprintf(w, "  - %s (%d commits)\n", a.Author, a.Commits)
+		author := a.Author
+		if hideName {
+			author = obfuscateAuthor(author)
+		}
+		fmt.Fprintf(w, "  - %s (%d commits)\n", author, a.Commits)
 	}
+}
+
+func obfuscateAuthor(author string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(author)))
+	return "auth-" + hex.EncodeToString(sum[:4])
 }
 
 func evaluateStagedGuard(repo *git.Repository, cfg stagedConfig) (*tangledWarning, error) {

@@ -238,12 +238,8 @@ func parseAuthorName(raw string) string {
 	if idx := strings.Index(s, "<"); idx >= 0 {
 		s = strings.TrimSpace(s[:idx])
 	}
-	fields := strings.Fields(s)
-	if len(fields) == 0 {
-		return ""
-	}
-	name := strings.Trim(fields[0], " ,;:")
-	return name
+	s = strings.Trim(s, " ,;:")
+	return s
 }
 
 func run(path string, timeout time.Duration, args ...string) (string, error) {
