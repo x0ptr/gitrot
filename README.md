@@ -1,4 +1,8 @@
-# gitrot
+# 🥀 gitrot
+
+![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+![Release](https://img.shields.io/github/v/release/x0ptr/gitrot)
 
 `gitrot` is a local CLI for detecting semantic decay from Git history.
 
