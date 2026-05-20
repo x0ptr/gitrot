@@ -59,6 +59,9 @@ func TestLoadHotspotConfigParsesOptionalPath(t *testing.T) {
 	if withoutPath.targetPath != "" {
 		t.Fatalf("expected empty target path, got %q", withoutPath.targetPath)
 	}
+	if withoutPath.limit != 10 {
+		t.Fatalf("expected default limit=10, got %d", withoutPath.limit)
+	}
 
 	withPath, err := loadHotspotConfig(dir, []string{"src/api"})
 	if err != nil {
@@ -66,6 +69,14 @@ func TestLoadHotspotConfigParsesOptionalPath(t *testing.T) {
 	}
 	if withPath.targetPath != "src/api" {
 		t.Fatalf("expected normalized target path src/api, got %q", withPath.targetPath)
+	}
+
+	withLimit, err := loadHotspotConfig(dir, []string{"--limit=25", "src/api"})
+	if err != nil {
+		t.Fatalf("load hotspot config with limit: %v", err)
+	}
+	if withLimit.limit != 25 {
+		t.Fatalf("expected limit=25, got %d", withLimit.limit)
 	}
 }
 

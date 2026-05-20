@@ -51,6 +51,7 @@ type hotspotConfig struct {
 	history        int
 	minCoupling    float64
 	maxFiles       int
+	limit          int
 	targetPath     string
 	hideName       bool
 	ignoreDotfiles bool
@@ -451,7 +452,7 @@ func runHotspot(args []string) error {
 	hotspots := analyzer.IdentifyHotspots(toAnalyzerCommits(commits), analyzer.HotspotConfig{
 		CouplingThreshold: cfg.minCoupling / 100.0,
 		MaxFilesPerCommit: cfg.maxFiles,
-		MaxResults:        10,
+		MaxResults:        cfg.limit,
 		MinCommits:        5,
 		TargetPath:        cfg.targetPath,
 	})
@@ -469,6 +470,7 @@ func loadHotspotConfig(repoRoot string, args []string) (hotspotConfig, error) {
 		history:        2000,
 		minCoupling:    60,
 		maxFiles:       30,
+		limit:          10,
 		hideName:       false,
 		ignoreDotfiles: true,
 	}
@@ -488,13 +490,14 @@ func loadHotspotConfig(repoRoot string, args []string) (hotspotConfig, error) {
 	fs.IntVar(&cfg.history, "history", cfg.history, "number of past commits to analyze")
 	fs.Float64Var(&cfg.minCoupling, "min-coupling", cfg.minCoupling, "minimum coupling percentage [0-100]")
 	fs.IntVar(&cfg.maxFiles, "max-files", cfg.maxFiles, "ignore commits touching more than this many files")
+	fs.IntVar(&cfg.limit, "limit", cfg.limit, "maximum number of hotspots to print")
 	fs.BoolVar(&cfg.hideName, "hide-name", cfg.hideName, "obfuscate developer names in output")
 	fs.BoolVar(&cfg.ignoreDotfiles, "ignore-dotfiles", cfg.ignoreDotfiles, "exclude dotfiles and hidden directories from analysis")
 	if err := fs.Parse(args); err != nil {
 		return hotspotConfig{}, err
 	}
 	if fs.NArg() > 1 {
-		return hotspotConfig{}, fmt.Errorf("usage: gitrot hotspot [--history 2000] [--min-coupling 60] [--max-files 30] [--hide-name] [--ignore-dotfiles] [path]")
+		return hotspotConfig{}, fmt.Errorf("usage: gitrot hotspot [--history 2000] [--min-coupling 60] [--max-files 30] [--limit 10] [--hide-name] [--ignore-dotfiles] [path]")
 	}
 	if fs.NArg() == 1 {
 		targetPath, err := normalizeHotspotTargetPath(repoRoot, fs.Arg(0))
@@ -512,6 +515,9 @@ func loadHotspotConfig(repoRoot string, args []string) (hotspotConfig, error) {
 	}
 	if cfg.maxFiles < 1 {
 		return hotspotConfig{}, fmt.Errorf("--max-files must be >= 1")
+	}
+	if cfg.limit < 1 {
+		return hotspotConfig{}, fmt.Errorf("--limit must be >= 1")
 	}
 	return cfg, nil
 }
@@ -612,7 +618,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  gitrot status [--history 2000] [--min-coupling 60] [--min-cohesion 30] [--min-shared 3] [--min-drift 2] [--max-files 30] [--ignore-tangled] [--ignore-silo] [--hide-name] [--ignore-dotfiles]")
 	fmt.Fprintln(os.Stderr, "  gitrot staged [--history 2000] [--min-coupling 60] [--min-cohesion 30] [--max-files 30] [--ignore-tangled] [--ignore-silo] [--hide-name] [--ignore-dotfiles]")
 	fmt.Fprintln(os.Stderr, "  gitrot map [--hide-name] [--ignore-dotfiles] <file_path>")
-	fmt.Fprintln(os.Stderr, "  gitrot hotspot [--history 2000] [--min-coupling 60] [--max-files 30] [--hide-name] [--ignore-dotfiles] [path]")
+	fmt.Fprintln(os.Stderr, "  gitrot hotspot [--history 2000] [--min-coupling 60] [--max-files 30] [--limit 10] [--hide-name] [--ignore-dotfiles] [path]")
 	fmt.Fprintln(os.Stderr, "  gitrot ack <file_path>")
 	fmt.Fprintln(os.Stderr, "  gitrot init")
 }

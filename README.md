@@ -2,6 +2,20 @@
 
 `gitrot` is a local CLI for detecting semantic decay from Git history.
 
+## See It in Action
+
+### Drift and Pre-Commit Guard
+
+![gitrot status demo](./assets/demo_status.gif)
+
+### Knowledge Map Discovery
+
+![gitrot map demo](./assets/demo_map.gif)
+
+### Hotspot Detection
+
+![gitrot hotspot demo](./assets/demo_hotspot.gif)
+
 It currently covers:
 - **Dissonance Drift**: a file keeps changing while historically coupled files are left behind.
 - **Tangled Commit Detection**: staged files in one commit have low historical cohesion.
@@ -22,7 +36,7 @@ gitrot init
 gitrot status [--history 2000] [--min-coupling 60] [--min-cohesion 30] [--min-shared 3] [--min-drift 2] [--max-files 30] [--ignore-tangled] [--ignore-silo] [--hide-name] [--ignore-dotfiles]
 gitrot staged [--history 2000] [--min-coupling 60] [--min-cohesion 30] [--max-files 30] [--ignore-tangled] [--ignore-silo] [--hide-name] [--ignore-dotfiles]
 gitrot map [--hide-name] [--ignore-dotfiles] <file_path>
-gitrot hotspot [--history 2000] [--min-coupling 60] [--max-files 30] [--hide-name] [--ignore-dotfiles] [path]
+gitrot hotspot [--history 2000] [--min-coupling 60] [--max-files 30] [--limit 10] [--hide-name] [--ignore-dotfiles] [path]
 gitrot ack <file_path>
 ```
 
@@ -32,6 +46,8 @@ gitrot ack <file_path>
 
 When enabled (default), it also evaluates staged cohesion at the end and prints a warning if the staged set looks atypical.
 Unlike `staged`, `status` does not fail the process for tangled commits.
+
+![gitrot status output](./assets/demo_status.gif)
 
 ### Context Loss
 
@@ -81,6 +97,8 @@ If no historical data is available for the target, it prints:
 Error: No historical data found for <file>
 ```
 
+![gitrot map output](./assets/demo_map.gif)
+
 ## `gitrot hotspot`
 
 Prints top refactoring hotspots using only Git metadata:
@@ -89,7 +107,7 @@ Prints top refactoring hotspots using only Git metadata:
 - **Score**: `churn * coupling_degree`
 
 Files with fewer than 5 commits are ignored as low-churn noise.
-Sorted by score (desc), limited to top 10.
+Sorted by score (desc), limited by `--limit` (default: 10).
 Optionally pass a path prefix (for example `src/api`) to restrict which hotspot files are shown.
 
 Output format:
@@ -115,6 +133,8 @@ If no file exceeds the current thresholds:
 ```text
 No critical hotspots detected based on current thresholds.
 ```
+
+![gitrot hotspot output](./assets/demo_hotspot.gif)
 
 ## Configuration
 
