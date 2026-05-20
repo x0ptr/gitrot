@@ -42,6 +42,13 @@ type mapConfig struct {
 	hideName bool
 }
 
+type hotspotConfig struct {
+	history     int
+	minCoupling float64
+	maxFiles    int
+	targetPath  string
+}
+
 type exitCoder interface {
 	error
 	ExitCode() int
@@ -80,6 +87,8 @@ func main() {
 		err = runStaged(os.Args[2:])
 	case "map":
 		err = runMap(os.Args[2:])
+	case "hotspot":
+		err = runHotspot(os.Args[2:])
 	case "ack":
 		err = runAck(os.Args[2:])
 	case "init":
@@ -389,6 +398,88 @@ func runMap(args []string) error {
 	return nil
 }
 
+func runHotspot(args []string) error {
+	repo, err := git.NewRepository(".")
+	if err != nil {
+		return err
+	}
+
+	cfg, err := loadHotspotConfig(repo.Root(), args)
+	if err != nil {
+		return err
+	}
+
+	commits, err := repo.LoadCommits(cfg.history)
+	if err != nil {
+		return err
+	}
+	if len(commits) == 0 {
+		fmt.Println("No critical hotspots detected based on current thresholds.")
+		return nil
+	}
+
+	hotspots := analyzer.IdentifyHotspots(toAnalyzerCommits(commits), analyzer.HotspotConfig{
+		CouplingThreshold: cfg.minCoupling / 100.0,
+		MaxFilesPerCommit: cfg.maxFiles,
+		MaxResults:        10,
+		MinCommits:        5,
+		TargetPath:        cfg.targetPath,
+	})
+	if len(hotspots) == 0 {
+		fmt.Println("No critical hotspots detected based on current thresholds.")
+		return nil
+	}
+
+	printHotspots(os.Stdout, hotspots, cfg.targetPath)
+	return nil
+}
+
+func loadHotspotConfig(repoRoot string, args []string) (hotspotConfig, error) {
+	cfg := hotspotConfig{
+		history:     2000,
+		minCoupling: 60,
+		maxFiles:    30,
+	}
+
+	repoCfg, err := config.Load(filepath.Join(repoRoot, ".gitrot.toml"))
+	if err != nil {
+		return hotspotConfig{}, err
+	}
+	cfg.history = repoCfg.Thresholds.History
+	cfg.minCoupling = repoCfg.Thresholds.MinCoupling
+	cfg.maxFiles = repoCfg.Thresholds.MaxFiles
+
+	fs := flag.NewFlagSet("hotspot", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	fs.IntVar(&cfg.history, "history", cfg.history, "number of past commits to analyze")
+	fs.Float64Var(&cfg.minCoupling, "min-coupling", cfg.minCoupling, "minimum coupling percentage [0-100]")
+	fs.IntVar(&cfg.maxFiles, "max-files", cfg.maxFiles, "ignore commits touching more than this many files")
+	if err := fs.Parse(args); err != nil {
+		return hotspotConfig{}, err
+	}
+	if fs.NArg() > 1 {
+		return hotspotConfig{}, fmt.Errorf("usage: gitrot hotspot [--history 2000] [--min-coupling 60] [--max-files 30] [path]")
+	}
+	if fs.NArg() == 1 {
+		targetPath, err := normalizeHotspotTargetPath(repoRoot, fs.Arg(0))
+		if err != nil {
+			return hotspotConfig{}, err
+		}
+		cfg.targetPath = targetPath
+	}
+
+	if cfg.history < 1 {
+		return hotspotConfig{}, fmt.Errorf("--history must be >= 1")
+	}
+	if cfg.minCoupling <= 0 || cfg.minCoupling > 100 {
+		return hotspotConfig{}, fmt.Errorf("--min-coupling must be in (0, 100]")
+	}
+	if cfg.maxFiles < 1 {
+		return hotspotConfig{}, fmt.Errorf("--max-files must be >= 1")
+	}
+	return cfg, nil
+}
+
 func loadMapConfig(repoRoot string, args []string) (mapConfig, string, error) {
 	cfg := mapConfig{
 		history:  2000,
@@ -482,6 +573,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  gitrot status [--history 2000] [--min-coupling 60] [--min-cohesion 30] [--min-shared 3] [--min-drift 2] [--max-files 30] [--ignore-tangled] [--ignore-silo]")
 	fmt.Fprintln(os.Stderr, "  gitrot staged [--history 2000] [--min-coupling 60] [--min-cohesion 30] [--max-files 30] [--ignore-tangled] [--ignore-silo]")
 	fmt.Fprintln(os.Stderr, "  gitrot map [--hide-name] <file_path>")
+	fmt.Fprintln(os.Stderr, "  gitrot hotspot [--history 2000] [--min-coupling 60] [--max-files 30] [path]")
 	fmt.Fprintln(os.Stderr, "  gitrot ack <file_path>")
 	fmt.Fprintln(os.Stderr, "  gitrot init")
 }
@@ -508,6 +600,51 @@ func printKnowledgeMap(w io.Writer, knowledge analyzer.KnowledgeMap, hideName bo
 func obfuscateAuthor(author string) string {
 	sum := sha256.Sum256([]byte(strings.TrimSpace(author)))
 	return "auth-" + hex.EncodeToString(sum[:4])
+}
+
+func printHotspots(w io.Writer, hotspots []analyzer.Hotspot, targetPath string) {
+	fmt.Fprintln(w, "Refactoring Hotspots (High Coupling + High Churn)")
+	if targetPath == "" {
+		fmt.Fprintln(w, "Target: Entire Repository")
+	} else {
+		fmt.Fprintf(w, "Target: %s\n", targetPath)
+	}
+	fmt.Fprintln(w, "--------------------------------------------------")
+	fmt.Fprintln(w)
+	for i, h := range hotspots {
+		fmt.Fprintf(w, "%d. %s\n", i+1, h.Path)
+		fmt.Fprintf(w, "   Score: %d | Coupled to: %d files | Changes: %d commits\n", h.Score, h.CouplingDegree, h.Churn)
+		if i == 0 {
+			fmt.Fprintln(w, "   Tip: High probability of being a \"God Class\".")
+		}
+		fmt.Fprintln(w)
+	}
+}
+
+func normalizeHotspotTargetPath(repoRoot, target string) (string, error) {
+	t := strings.TrimSpace(target)
+	if t == "" || t == "." {
+		return "", nil
+	}
+
+	candidate := t
+	if filepath.IsAbs(candidate) {
+		rel, err := filepath.Rel(repoRoot, candidate)
+		if err != nil {
+			return "", fmt.Errorf("normalize hotspot path: %w", err)
+		}
+		candidate = rel
+	}
+
+	candidate = filepath.Clean(candidate)
+	candidate = filepath.ToSlash(candidate)
+	if candidate == "." {
+		return "", nil
+	}
+	if strings.HasPrefix(candidate, "../") {
+		return "", fmt.Errorf("hotspot path must be inside the repository")
+	}
+	return candidate, nil
 }
 
 func evaluateStagedGuard(repo *git.Repository, cfg stagedConfig) (*tangledWarning, error) {

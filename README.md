@@ -21,6 +21,7 @@ gitrot init
 gitrot status [--history 2000] [--min-coupling 60] [--min-cohesion 30] [--min-shared 3] [--min-drift 2] [--max-files 30] [--ignore-tangled] [--ignore-silo]
 gitrot staged [--history 2000] [--min-coupling 60] [--min-cohesion 30] [--max-files 30] [--ignore-tangled] [--ignore-silo]
 gitrot map [--hide-name] <file_path>
+gitrot hotspot [--history 2000] [--min-coupling 60] [--max-files 30] [path]
 gitrot ack <file_path>
 ```
 
@@ -76,6 +77,23 @@ If no historical data is available for the target, it prints:
 
 ```text
 Error: No historical data found for <file>
+```
+
+## `gitrot hotspot`
+
+Prints top refactoring hotspots using only Git metadata:
+- **Churn**: number of commits per file
+- **Coupling Degree**: number of unique files coupled above `min_coupling`
+- **Score**: `churn * coupling_degree`
+
+Files with fewer than 5 commits are ignored as low-churn noise.
+Sorted by score (desc), limited to top 10.
+Optionally pass a path prefix (for example `src/api`) to restrict which hotspot files are shown.
+
+If no file exceeds the current thresholds:
+
+```text
+No critical hotspots detected based on current thresholds.
 ```
 
 ## Configuration

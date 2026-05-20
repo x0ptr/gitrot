@@ -43,3 +43,27 @@ func TestLoadMapConfigHideNamePrecedence(t *testing.T) {
 		t.Fatalf("expected explicit --hide-name=false to override config")
 	}
 }
+
+func TestLoadHotspotConfigParsesOptionalPath(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, ".gitrot.toml")
+	if err := config.Save(cfgPath, config.Default()); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	withoutPath, err := loadHotspotConfig(dir, []string{})
+	if err != nil {
+		t.Fatalf("load hotspot config without path: %v", err)
+	}
+	if withoutPath.targetPath != "" {
+		t.Fatalf("expected empty target path, got %q", withoutPath.targetPath)
+	}
+
+	withPath, err := loadHotspotConfig(dir, []string{"src/api"})
+	if err != nil {
+		t.Fatalf("load hotspot config with path: %v", err)
+	}
+	if withPath.targetPath != "src/api" {
+		t.Fatalf("expected normalized target path src/api, got %q", withPath.targetPath)
+	}
+}
